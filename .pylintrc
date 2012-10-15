@@ -1,0 +1,13 @@
+[Basic]
+method-rgx=([a-z_][a-z0-9_]{2,30}$)|setUp|tearDown
+no-docstring-rgx=(__.*__)|(test_.*)
+
+[Design]
+min-public-methods=0
+
+[Messages Control]
+# Run 'pylint --list-msgs | grep <id>' to see what each ID means.
+disable=I0011,W0603
+
+[Variables]
+additional-builtins=_

@@ -1,0 +1,6 @@
+*.pyc
+.coverage*
+coverage.html
+dist
+scalestack.egg-info
+test.data
