@@ -31,4 +31,4 @@ on the code by running::
 
     pylint -iy --rcfile .pylintrc scalestack
     pep8 -r scalestack
-    pyflakes scalestack
+    pyflakes scalestack | grep -v "undefined name '_'"

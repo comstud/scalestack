@@ -18,7 +18,8 @@ CONFIG_OPTIONS = {
         '%(wall_seconds).3f',
         _('Request log format, for details see the log_format option at: '
         'http://eventlet.net/doc/modules/wsgi.html')),
-    'server_name': scalestack.Option(str, 'ScaleStack',
+    'server_name': scalestack.Option(str,
+        'ScaleStack/%s' % scalestack.__version__,
         _('Name to use in Server response header.'))}
 
 
@@ -32,6 +33,7 @@ class Service(scalestack.Common):
         server.bind((self._get_config('host'), self._get_config('port')))
         server.listen(self._get_config('backlog'))
         self._log.info(_('Listening on %s'), server.getsockname())
+        self._sites = []
 
         log = EventletWSGILog(self._log)
 
@@ -44,25 +46,47 @@ class Service(scalestack.Common):
             log=log, log_format=self._get_config('request_log_format'),
             custom_pool=self.core.thread_pool)
 
+    def add_site(self, host, path, request_class):
+        '''Add a site to the service, making sure it doesn't already exist.'''
+        if path[0] != '/':
+            path = '/%s' % path
+        match = self.match_site(host, path)
+        if match is not None and match[0] == host and match[1] == path:
+            raise SiteAlreadyExists('%s %s' % host, path)
+        self._sites.append((host, path, request_class))
+
+    def match_site(self, host, path):
+        '''Find the best match for a given host and path.'''
+        match = None
+        for site in self._sites:
+            if host != site[0] and site[0] is not None:
+                continue
+            if match is not None and len(match[1]) > len(site[1]):
+                continue
+            if path.startswith(site[1]):
+                match = site
+        return match
+
     def __call__(self, env, start):
         '''Entry point for all requests. Wrap all exceptions with an internal
         server error.'''
+        host = env.get('HTTP_HOST', None)
+        if host is not None:
+            host = host.rsplit(':', 1)[0]
+        match = self.match_site(host, env.get('PATH_INFO', '/'))
         try:
-            return Request(env, start, self.core).run()
+            if match is None:
+                raise NotFound()
+            return match[2](env, start, self.core).run()
         except StatusCode, exception:
-            found = False
-            for header in exception.headers:
-                if header[0] == 'Server':
-                    found = True
-                    break
-            if not found:
+            if not header_exists('Server', exception.headers):
                 exception.headers.insert(0,
                     ('Server', self._get_config('server_name')))
             start(exception.status, exception.headers)
             self._log.warning(_('Status code: %s'), exception)
             return exception.body
         except Exception, exception:
-            self._log.error('Uncaught exception in request: %s (%s)',
+            self._log.error(_('Uncaught exception in request: %s (%s)'),
                 exception, ''.join(traceback.format_exc().split('\n')))
             start(_('500 Internal Server Error'),
                 [('Server', self._get_config('server_name'))])
@@ -95,7 +119,7 @@ class Request(scalestack.Common):
 
     def run(self):
         '''Run the request.'''
-        return self._ok('test')
+        raise NotImplementedError()  # pragma: no cover
 
     def _read_body(self):
         '''Read the request body.'''
@@ -176,7 +200,9 @@ class StatusCode(Exception):
 
     def __init__(self, body=None, headers=None):
         self.headers = headers or []
-        self.body = body or ''
+        self.body = body or self.status
+        if body is None and not header_exists('Content-Type', self.headers):
+            self.headers.append(('Content-Type', 'text/plain'))
         super(StatusCode, self).__init__(_('status=%s headers=%s body=%s') %
             (self.status, headers, body))
 
@@ -209,3 +235,17 @@ class MethodNotAllowed(StatusCode):
     '''Exception for a 405 response.'''
 
     status = _('405 Method Not Allowed')
+
+
+class SiteAlreadyExists(Exception):
+    '''Exception raised when a site already exists.'''
+
+    pass
+
+
+def header_exists(name, headers):
+    '''Check to see if a header exists in a list of headers.'''
+    for header in headers:
+        if header[0] == name:
+            return True
+    return False

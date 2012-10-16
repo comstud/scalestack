@@ -194,6 +194,12 @@ class InvalidConfigOption(Exception):
     pass
 
 
+def data_file(filename):
+    '''Get a data file from the package data directory.'''
+    filename = os.path.join(os.path.split(__file__)[0], '_data', filename)
+    return open(filename).read()
+
+
 UNIQUE_ID_EXTRA = 0
 
 

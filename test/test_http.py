@@ -10,5 +10,5 @@ class TestHTTP(unittest.TestCase):
 
     def test_basic(self):
         response = test.request('GET', '/')
-        self.assertEquals(200, response.status)
-        self.assertEquals('test', response.read())
+        self.assertEquals(404, response.status)
+        self.assertEquals('404 Not Found', response.read())

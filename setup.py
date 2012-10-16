@@ -1,9 +1,9 @@
 #!/usr/bin/python
 
-from setuptools import setup, find_packages
+import setuptools
 import scalestack
 
-setup(
+setuptools.setup(
     name='scalestack',
     version=scalestack.__version__,
     description='Scale Stack',
@@ -11,7 +11,8 @@ setup(
     url='http://scalestack.org/',
     author='Eric Day',
     author_email='eric@livelydays.com',
-    packages=find_packages(),
+    packages=['scalestack'],
+    include_package_data=True,
     scripts=['bin/scalestack'],
     test_suite='nose.collector',
     install_requires=['eventlet'],

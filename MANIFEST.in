@@ -1,3 +1,4 @@
 include README.rst
 include UNLICENSE
 graft doc
+graft scalestack/_data
