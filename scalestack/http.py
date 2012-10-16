@@ -1,4 +1,4 @@
-'''HTTP server and request processing module.'''
+'''HTTP service based on eventlet.wsgi.'''
 
 import Cookie
 import socket
@@ -8,26 +8,31 @@ import eventlet.wsgi
 
 import scalestack
 
-DEFAULT_HOST = ''
-DEFAULT_PORT = 80
-DEFAULT_BACKLOG = 64
-DEFAULT_REQUEST_LOG_FORMAT = '%(client_ip)s "%(request_line)s" ' \
-        '%(status_code)s %(body_length)s %(wall_seconds).3f'
-DEFAULT_SERVER_NAME = 'ScaleStack'
-DEFAULT_COOKIE_EXPIRES = 31536000
+CONFIG_OPTIONS = {
+    'host': scalestack.Option(str, '', _('Host to bind to.')),
+    'port': scalestack.Option(int, 80, _('Port to bind to.')),
+    'backlog': scalestack.Option(int, 64,
+        _('Number of connections to keep in baclog for listening socket.')),
+    'request_log_format': scalestack.Option(str,
+        '%(client_ip)s "%(request_line)s" %(status_code)s %(body_length)s '
+        '%(wall_seconds).3f',
+        _('Request log format, for details see the log_format option at: '
+        'http://eventlet.net/doc/modules/wsgi.html')),
+    'server_name': scalestack.Option(str, 'ScaleStack',
+        _('Name to use in Server response header.'))}
 
 
-class Server(scalestack.Common):
-    '''Server class.'''
+class Service(scalestack.Common):
+    '''HTTP service class.'''
 
     def __init__(self, core):
-        super(Server, self).__init__(core)
+        super(Service, self).__init__(core)
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server.bind((self.core.config_get('http.host', DEFAULT_HOST),
-            self.core.config_get('http.port', DEFAULT_PORT)))
-        server.listen(self.core.config_get('http.backlog', DEFAULT_BACKLOG))
-        self._log.info(_('Listening on %s:%d') % server.getsockname())
+        server.bind((self._get_config('host'), self._get_config('port')))
+        server.listen(self._get_config('backlog'))
+        self._log.info(_('Listening on %s'), server.getsockname())
+
         log = EventletWSGILog(self._log)
 
         def log_message(self, message, *args):
@@ -35,13 +40,12 @@ class Server(scalestack.Common):
             log.write('%s %s\n' % (self.client_address[0], message % args))
 
         eventlet.wsgi.HttpProtocol.log_message = log_message
-        log_format = self.core.config_get('http.request_log_format',
-            DEFAULT_REQUEST_LOG_FORMAT)
         self.core.thread_pool.spawn_n(eventlet.wsgi.server, server, self,
-            log=log, log_format=log_format, custom_pool=self.core.thread_pool)
+            log=log, log_format=self._get_config('request_log_format'),
+            custom_pool=self.core.thread_pool)
 
     def __call__(self, env, start):
-        '''Entry for all requests. Wrap all exceptions with an internal
+        '''Entry point for all requests. Wrap all exceptions with an internal
         server error.'''
         try:
             return Request(env, start, self.core).run()
@@ -52,18 +56,16 @@ class Server(scalestack.Common):
                     found = True
                     break
             if not found:
-                server_name = self.core.config_get('http.server_name',
-                    DEFAULT_SERVER_NAME)
-                exception.headers.insert(0, ('Server', server_name))
+                exception.headers.insert(0,
+                    ('Server', self._get_config('server_name')))
             start(exception.status, exception.headers)
-            self._log.warning(_('Status code: %s') % exception)
+            self._log.warning(_('Status code: %s'), exception)
             return exception.body
-        except Exception:
-            error = ''.join(traceback.format_exc().split('\n'))
-            self._log.error(error)
-            server_name = self.core.config_get('http.server_name',
-                DEFAULT_SERVER_NAME)
-            start(_('500 Internal Server Error'), [('Server', server_name)])
+        except Exception, exception:
+            self._log.error('Uncaught exception in request: %s (%s)',
+                exception, ''.join(traceback.format_exc().split('\n')))
+            start(_('500 Internal Server Error'),
+                [('Server', self._get_config('server_name'))])
             return ''
 
 
@@ -89,9 +91,7 @@ class Request(scalestack.Common):
         self._parameters = None
         self._cookies = None
         self._body = None
-        server_name = self.core.config_get('http.server_name',
-            DEFAULT_SERVER_NAME)
-        self._headers = [('Server', server_name)]
+        self._headers = [('Server', self._get_config('server_name'))]
 
     def run(self):
         '''Run the request.'''
@@ -104,7 +104,7 @@ class Request(scalestack.Common):
         try:
             self._body = self._env['wsgi.input'].read()
         except Exception, exception:
-            self._log.error(_('Error reading request body: %s') % exception)
+            self._log.error(_('Error reading request body: %s'), exception)
             raise BadRequest(_('Error reading request body'))
 
     def _parse_parameters(self):
@@ -139,15 +139,16 @@ class Request(scalestack.Common):
             else:
                 self._cookies[key] = cookie[1].strip(' \t"')
 
-    def _set_cookie(self, name, value, path='/', expires=None):
+    def _set_cookie(self, name, value, expires=None, path=None, domain=None):
         '''Set a cookie in the response headers.'''
-        if expires is None:
-            expires = self.core.config_get('http.cookie_expires',
-                DEFAULT_COOKIE_EXPIRES)
         cookie = Cookie.SimpleCookie()
         cookie[name] = value
-        cookie[name]['path'] = path
-        cookie[name]['expires'] = expires
+        if expires is not None:
+            cookie[name]['expires'] = expires
+        if path is not None:
+            cookie[name]['path'] = path
+        if domain is not None:
+            cookie[name]['domain'] = path
         self._headers.append(('Set-Cookie', cookie[name].OutputString()))
 
     def _respond(self, status, body=None):

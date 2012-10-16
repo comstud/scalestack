@@ -6,7 +6,7 @@
 project_dir=$(cd `dirname "$0"`; cd ..; pwd)
 if [ -f "$project_dir/scalestack/__init__.py" ]
 then
-    PYTHONPATH="$project_dir/:$PYTHONPATH"
+    PYTHONPATH="$project_dir:$PYTHONPATH"
     export PYTHONPATH
 fi
 

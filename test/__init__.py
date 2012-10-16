@@ -15,7 +15,7 @@ TEST_HOST = '127.0.0.1'
 TEST_PORT = 8123
 TEST_PATH = 'test.data'
 TEST_PID = '%s/pid' % TEST_PATH
-TEST_LOGGING = scalestack.DEFAULT_LOGGING
+TEST_LOGGING = scalestack.CONFIG_OPTIONS['logging'].default_value
 TEST_LOGGING['handlers']['file'] = {
     'class': 'logging.FileHandler',
     'filename': '%s/log' % TEST_PATH,
@@ -52,8 +52,9 @@ def start():
             pass
         core = scalestack.Core(TEST_PATH)
         core.force_log_level = logging.DEBUG
-        core.config_set('http', {'host': TEST_HOST, 'port': TEST_PORT})
-        core.config_set('logging', TEST_LOGGING)
+        core.set_config('scalestack', 'logging', TEST_LOGGING)
+        core.set_config('scalestack.http', 'host', TEST_HOST)
+        core.set_config('scalestack.http', 'port', TEST_PORT)
         core.run()
         sys.exit(0)
     pid_file = open(TEST_PID, 'w')

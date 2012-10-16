@@ -1,4 +1,4 @@
-'''Unittests for HTTP server and request processing.'''
+'''Unittests for HTTP service.'''
 
 import unittest
 
@@ -6,7 +6,7 @@ import test
 
 
 class TestHTTP(unittest.TestCase):
-    '''Test case for HTTP server.'''
+    '''Test case for HTTP service.'''
 
     def test_basic(self):
         response = test.request('GET', '/')

@@ -3,6 +3,8 @@ method-rgx=([a-z_][a-z0-9_]{2,30}$)|setUp|tearDown
 no-docstring-rgx=(__.*__)|(test_.*)
 
 [Design]
+max-args=10
+max-attributes=10
 min-public-methods=0
 
 [Messages Control]
