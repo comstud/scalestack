@@ -9,16 +9,16 @@ import eventlet.wsgi
 import scalestack
 
 CONFIG_OPTIONS = {
-    'host': scalestack.Option(str, '', _('Host to bind to.')),
-    'port': scalestack.Option(int, 80, _('Port to bind to.')),
-    'backlog': scalestack.Option(int, 64,
+    'host': scalestack.Option(str(), '', _('Host to bind to.')),
+    'port': scalestack.Option(int(), 80, _('Port to bind to.')),
+    'backlog': scalestack.Option(int(), 64,
         _('Number of connections to keep in baclog for listening socket.')),
-    'request_log_format': scalestack.Option(str,
+    'request_log_format': scalestack.Option(str(),
         '%(client_ip)s "%(request_line)s" %(status_code)s %(body_length)s '
         '%(wall_seconds).3f',
         _('Request log format, for details see the log_format option at: '
         'http://eventlet.net/doc/modules/wsgi.html')),
-    'server_name': scalestack.Option(str,
+    'server_name': scalestack.Option(str(),
         'ScaleStack/%s' % scalestack.__version__,
         _('Name to use in Server response header.'))}
 
@@ -54,6 +54,7 @@ class Service(scalestack.Common):
         if match is not None and match[0] == host and match[1] == path:
             raise SiteAlreadyExists('%s %s' % host, path)
         self._sites.append((host, path, request_class))
+        self._log.info(_('Added site: %s %s'), host, path)
 
     def match_site(self, host, path):
         '''Find the best match for a given host and path.'''
@@ -178,6 +179,8 @@ class Request(scalestack.Common):
     def _respond(self, status, body=None):
         '''Start response with the given status.'''
         self._start(status, self._headers)
+        self._log.debug(_('Request details: status=%s headers=%s'), status,
+            self._headers)
         return body or ''
 
     def _ok(self, body=None):
@@ -203,8 +206,8 @@ class StatusCode(Exception):
         self.body = body or self.status
         if body is None and not header_exists('Content-Type', self.headers):
             self.headers.append(('Content-Type', 'text/plain'))
-        super(StatusCode, self).__init__(_('status=%s headers=%s body=%s') %
-            (self.status, headers, body))
+        super(StatusCode, self).__init__(_('status=%s headers=%s') %
+            (self.status, headers))
 
 
 class BadRequest(StatusCode):

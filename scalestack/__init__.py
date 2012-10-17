@@ -22,12 +22,26 @@ __version__ = '0'
 
 
 class Option(object):
-    '''Details for config options.'''
+    '''Details for config options. The schema is the valid type representation
+    used to convert and verify types. The empty string means any string, the
+    number 0 means any integer, 0.0 means any floating point number, and False
+    means any boolean value (default values for those types). Non-empty string
+    values must match exactly. For example, a dictionary that can have any key
+    name and values that are lists of any string values would be:
 
-    def __init__(self, value_type, default_value, help_text):
-        self.value_type = value_type
-        self.default_value = default_value
-        self.help_text = help_text
+        {str(): [str()]}
+
+    For a dictionary that only allows host and port keys, you would use:
+
+        {'host': str(), 'port': int()}
+
+    Any python type that is safe to convert via json can be used, which means
+    dict, list, str, int, float, and bool.'''
+
+    def __init__(self, schema, default, description):
+        self.schema = schema
+        self.default = default
+        self.description = description
 
 
 class Common(object):
@@ -38,14 +52,17 @@ class Common(object):
         self._log = logging.getLogger(self.__module__)
         if self.core.force_log_level is not None:
             self._log.setLevel(self.core.force_log_level)
+        self._log.debug(_('%s instance created'), self.__class__.__name__)
 
     def _get_config(self, option):
         '''Get config options for this module.'''
         return self.core.get_config(self.__module__, option)
 
 
+DEFAULT_PATH = os.path.join(os.environ['HOME'], '.scalestack')
+DEFAULT_CONFIG = {'scalestack.http': {}}
 CONFIG_OPTIONS = {
-    'logging': Option(dict, {
+    'logging': Option(dict(), {
         'version': 1,
         'formatters': {
             'default': {
@@ -57,12 +74,10 @@ CONFIG_OPTIONS = {
                 'level': 'INFO'}},
         'root': {
             'handlers': ['console']}},
-        'Logging schema to use, for details see: '
-        'http://docs.python.org/library/logging.config.html'),
-    'thread_pool_size': Option(int, 1000,
-        'Number of threads to use for the thread pool.')}
-DEFAULT_PATH = os.path.join(os.environ['HOME'], '.scalestack')
-DEFAULT_CONFIG = {'scalestack.http': {}}
+        _('Logging schema to use, for details see: '
+        'http://docs.python.org/library/logging.config.html')),
+    'thread_pool_size': Option(int(), 1000,
+        _('Number of threads to use for the thread pool.'))}
 
 
 class Core(object):
@@ -103,7 +118,7 @@ class Core(object):
                 return self.config[service][local_option]
             if option in self.config[service]:
                 return self.config[service][option]
-        return sys.modules[service].CONFIG_OPTIONS[option].default_value
+        return sys.modules[service].CONFIG_OPTIONS[option].default
 
     def _get_config(self, option):
         '''Get config options for the core service.'''
@@ -117,7 +132,7 @@ class Core(object):
         if overwrite or option not in self.config:
             self.config[service][option] = value
             if self.running:
-                self._log.info(_('Set config option: %s.%s=%s'), service,
+                self._log.debug(_('Set config option: %s.%s=%s'), service,
                     option, value)
 
     def verify_config(self, service, option):
@@ -196,7 +211,7 @@ class InvalidConfigOption(Exception):
 
 def data_file(filename):
     '''Get a data file from the package data directory.'''
-    filename = os.path.join(os.path.split(__file__)[0], '_data', filename)
+    filename = os.path.join(os.path.dirname(__file__), '_data', filename)
     return open(filename).read()
 
 
@@ -280,7 +295,7 @@ def main():
                 option = sys.modules[service].CONFIG_OPTIONS[option_name]
                 print _('%s.%s=%s\n\n    %s\n    (default=%s)\n') % (service,
                     option_name, str(option.value_type)[7:-2],
-                    option.help_text, option.default_value)
+                    option.help_text, option.default)
         return
     try:
         print core.config

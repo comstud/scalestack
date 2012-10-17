@@ -15,7 +15,7 @@ TEST_HOST = '127.0.0.1'
 TEST_PORT = 8123
 TEST_PATH = 'test.data'
 TEST_PID = '%s/pid' % TEST_PATH
-TEST_LOGGING = scalestack.CONFIG_OPTIONS['logging'].default_value
+TEST_LOGGING = scalestack.CONFIG_OPTIONS['logging'].default
 TEST_LOGGING['handlers']['file'] = {
     'class': 'logging.FileHandler',
     'filename': '%s/log' % TEST_PATH,
