@@ -1,5 +1,9 @@
-'''Core services for the scalestack package. Also handle option parsing
-and starting the core when run from the command line.'''
+'''Core services and base classes for the scalestack package. Also handle
+option parsing and starting the core when run from the command line.'''
+
+# Patch all the standard libs to support cooperative yielding through gevent.
+import gevent.monkey
+gevent.monkey.patch_all()
 
 import gettext
 import json
@@ -10,13 +14,8 @@ import sys
 import time
 import traceback
 
-import eventlet
-
 # Install the _(...) function as a built-in so all other modules don't need to.
 gettext.install('scalestack')
-
-# Patch all the standard libs to support cooperative yielding through eventlet.
-eventlet.monkey_patch()
 
 __version__ = '0'
 
@@ -49,9 +48,7 @@ class Common(object):
 
     def __init__(self, core):
         self.core = core
-        self._log = logging.getLogger(self.__module__)
-        if self.core.force_log_level is not None:
-            self._log.setLevel(self.core.force_log_level)
+        self._log = self.core.get_logger(self.__module__)
         self._log.debug(_('%s instance created'), self.__class__.__name__)
 
     def _get_config(self, option):
@@ -75,9 +72,7 @@ CONFIG_OPTIONS = {
         'root': {
             'handlers': ['console']}},
         _('Logging schema to use, for details see: '
-        'http://docs.python.org/library/logging.config.html')),
-    'thread_pool_size': Option(int(), 1000,
-        _('Number of threads to use for the thread pool.'))}
+        'http://docs.python.org/library/logging.config.html'))}
 
 
 class Core(object):
@@ -93,7 +88,6 @@ class Core(object):
         else:
             self.config = DEFAULT_CONFIG
         self.services = {'scalestack': self}
-        self.thread_pool = eventlet.GreenPool()
         self.force_log_level = None
         self.running = False
         self._log = None
@@ -141,6 +135,13 @@ class Core(object):
         if option not in sys.modules[service].CONFIG_OPTIONS:
             raise InvalidConfigOption('%s.%s' % (service, option))
 
+    def get_logger(self, name):
+        '''Get a logger.'''
+        logger = logging.getLogger(name)
+        if self.force_log_level is not None:
+            logger.setLevel(self.force_log_level)
+        return logger
+
     def load_service(self, service):
         '''Load a service.'''
         if service in self.services:
@@ -171,14 +172,14 @@ class Core(object):
     def run(self):
         '''Start logging, load services, and start the event loop.'''
         self._setup_logging()
-        self.thread_pool.resize(self._get_config('thread_pool_size'))
         self._log.info(_('Starting services'))
         self.running = True
         for service in self.config:
             self.start_service(service)
         self._log.info(_('Starting event loop'))
         try:
-            self.thread_pool.waitall()
+            while True:
+                time.sleep(60)
         except KeyboardInterrupt:
             pass
 
@@ -298,7 +299,6 @@ def main():
                     option.help_text, option.default)
         return
     try:
-        print core.config
         core.run()
     except Exception, exception:  # pylint: disable=W0703
         error = _('Uncaught exception in event loop: %s (%s)') % \

@@ -1,10 +1,10 @@
-'''HTTP service based on eventlet.wsgi.'''
+'''HTTP service based on gevent.pywsgi.'''
 
 import Cookie
 import socket
 import traceback
 
-import eventlet.wsgi
+import gevent.pywsgi
 
 import scalestack
 
@@ -13,14 +13,23 @@ CONFIG_OPTIONS = {
     'port': scalestack.Option(int(), 80, _('Port to bind to.')),
     'backlog': scalestack.Option(int(), 64,
         _('Number of connections to keep in baclog for listening socket.')),
-    'request_log_format': scalestack.Option(str(),
-        '%(client_ip)s "%(request_line)s" %(status_code)s %(body_length)s '
-        '%(wall_seconds).3f',
-        _('Request log format, for details see the log_format option at: '
-        'http://eventlet.net/doc/modules/wsgi.html')),
     'server_name': scalestack.Option(str(),
         'ScaleStack/%s' % scalestack.__version__,
         _('Name to use in Server response header.'))}
+
+
+class WSGIHandler(gevent.pywsgi.WSGIHandler):
+    '''Wrapper to do custom logging.'''
+
+    def log_request(self):
+        '''Log a request.'''
+        log = self.server.log['access']
+        log.info(self.format_request())
+
+    def log_error(self, msg, *args):
+        '''Log an error.'''
+        log = self.server.log['error']
+        log.warning(msg, *args)
 
 
 class Service(scalestack.Common):
@@ -34,17 +43,14 @@ class Service(scalestack.Common):
         server.listen(self._get_config('backlog'))
         self._log.info(_('Listening on %s'), server.getsockname())
         self._sites = []
-
-        log = EventletWSGILog(self._log)
-
-        def log_message(self, message, *args):
-            '''Hack to capture log lines that eventlet doesn't wrap.'''
-            log.write('%s %s\n' % (self.client_address[0], message % args))
-
-        eventlet.wsgi.HttpProtocol.log_message = log_message
-        self.core.thread_pool.spawn_n(eventlet.wsgi.server, server, self,
-            log=log, log_format=self._get_config('request_log_format'),
-            custom_pool=self.core.thread_pool)
+        log = {
+            'access': self.core.get_logger('scalestack.http.access'),
+            'error': self._log}
+        self._server = gevent.pywsgi.WSGIServer(server, self, log=log,
+            handler_class=WSGIHandler)
+        self._server.set_environ(
+            {'SERVER_SOFTWARE': self._get_config('server_name')})
+        self._server.start()
 
     def add_site(self, host, path, request_class):
         '''Add a site to the service, making sure it doesn't already exist.'''

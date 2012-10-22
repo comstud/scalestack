@@ -4,10 +4,12 @@ import atexit
 import httplib
 import logging
 import os
-import signal
 import shutil
+import signal
 import sys
 import time
+
+import gevent
 
 import scalestack
 
@@ -43,11 +45,11 @@ def start():
             cov = coverage.coverage(data_suffix=True)
             cov.start()
 
-            def save_coverage(_signum, _frame):
+            def save_coverage():
                 '''Callback for signal to save coverage info to file.'''
                 cov.save()
 
-            signal.signal(signal.SIGUSR1, save_coverage)
+            gevent.signal(signal.SIGUSR1, save_coverage)
         except ImportError:
             pass
         core = scalestack.Core(TEST_PATH)
