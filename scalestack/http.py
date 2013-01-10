@@ -1,7 +1,6 @@
 '''HTTP service based on gevent.pywsgi.'''
 
 import Cookie
-import socket
 import traceback
 
 import gevent.pywsgi
@@ -9,12 +8,11 @@ import gevent.pywsgi
 import scalestack
 
 CONFIG_OPTIONS = {
-    'host': scalestack.Option(str(), '', _('Host to bind to.')),
-    'port': scalestack.Option(int(), 80, _('Port to bind to.')),
-    'backlog': scalestack.Option(int(), 64,
+    'host': scalestack.Option('', _('Host to bind to.')),
+    'port': scalestack.Option(80, _('Port to bind to.')),
+    'backlog': scalestack.Option(64,
         _('Number of connections to keep in baclog for listening socket.')),
-    'server_name': scalestack.Option(str(),
-        'ScaleStack/%s' % scalestack.__version__,
+    'server_name': scalestack.Option('ScaleStack/%s' % scalestack.__version__,
         _('Name to use in Server response header.'))}
 
 
@@ -32,46 +30,59 @@ class WSGIHandler(gevent.pywsgi.WSGIHandler):
         log.warning(msg, *args)
 
 
+class Handler(object):
+    '''Options and request class for handlers.'''
+
+    def __init__(self, host, path, request_class, *args, **kwargs):
+        if path[0] != '/':
+            path = '/%s' % path
+        self.host = host
+        self.path = path
+        self.request_class = request_class
+        self.args = args
+        self.kwargs = kwargs
+
+
 class Service(scalestack.Common):
     '''HTTP service class.'''
 
     def __init__(self, core):
         super(Service, self).__init__(core)
-        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server.bind((self._get_config('host'), self._get_config('port')))
-        server.listen(self._get_config('backlog'))
-        self._log.info(_('Listening on %s'), server.getsockname())
-        self._sites = []
+        self._handlers = []
         log = {
             'access': self.core.get_logger('scalestack.http.access'),
             'error': self._log}
-        self._server = gevent.pywsgi.WSGIServer(server, self, log=log,
+        self._server = gevent.pywsgi.WSGIServer(
+            (self._get_config('host'), self._get_config('port')), self,
+            backlog=self._get_config('backlog'), log=log,
             handler_class=WSGIHandler)
         self._server.set_environ(
             {'SERVER_SOFTWARE': self._get_config('server_name')})
         self._server.start()
+        self._log.info(_('Listening on %s:%d'), self._server.server_host,
+            self._server.server_port)
 
-    def add_site(self, host, path, request_class):
-        '''Add a site to the service, making sure it doesn't already exist.'''
-        if path[0] != '/':
-            path = '/%s' % path
-        match = self.match_site(host, path)
-        if match is not None and match[0] == host and match[1] == path:
-            raise SiteAlreadyExists('%s %s' % host, path)
-        self._sites.append((host, path, request_class))
-        self._log.info(_('Added site: %s %s'), host, path)
+    def add_handler(self, handler):
+        '''Add a handler to the service, making sure it doesn't exist.'''
+        if self.match_handler(handler.host, handler.path, True) is not None:
+            raise HandlerAlreadyExists('%s %s' % handler.host, handler.path)
+        self._handlers.append(handler)
+        self._log.info(_('Added handler: %s %s'), handler.host, handler.path)
 
-    def match_site(self, host, path):
+    def match_handler(self, host, path, exact=False):
         '''Find the best match for a given host and path.'''
         match = None
-        for site in self._sites:
-            if host != site[0] and site[0] is not None:
+        for handler in self._handlers:
+            if host != handler.host and (exact or handler.host is not None):
                 continue
-            if match is not None and len(match[1]) > len(site[1]):
+            if exact:
+                if path == handler.path:
+                    return handler
                 continue
-            if path.startswith(site[1]):
-                match = site
+            if match is not None and len(match.path) > len(handler.path):
+                continue
+            if path.startswith(handler.path):
+                match = handler
         return match
 
     def __call__(self, env, start):
@@ -80,15 +91,18 @@ class Service(scalestack.Common):
         host = env.get('HTTP_HOST', None)
         if host is not None:
             host = host.rsplit(':', 1)[0]
-        match = self.match_site(host, env.get('PATH_INFO', '/'))
+        path = env.get('PATH_INFO', '/')
+        handler = self.match_handler(host, path)
         try:
-            if match is None:
+            if handler is None:
+                self._log.info(_('No handler found for %s %s'), host, path)
                 raise NotFound()
-            return match[2](env, start, self.core).run()
+            request = handler.request_class(env, start, self.core,
+                *handler.args, **handler.kwargs)
+            return request.run()
         except StatusCode, exception:
             if not header_exists('Server', exception.headers):
-                exception.headers.insert(0,
-                    ('Server', self._get_config('server_name')))
+                exception.headers.insert(0, ('Server', env['SERVER_SOFTWARE']))
             start(exception.status, exception.headers)
             self._log.warning(_('Status code: %s'), exception)
             return exception.body
@@ -96,33 +110,24 @@ class Service(scalestack.Common):
             self._log.error(_('Uncaught exception in request: %s (%s)'),
                 exception, ''.join(traceback.format_exc().split('\n')))
             start(_('500 Internal Server Error'),
-                [('Server', self._get_config('server_name'))])
+                [('Server', env['SERVER_SOFTWARE'])])
             return ''
-
-
-class EventletWSGILog(object):
-    '''Class for eventlet.wsgi.server to forward logging messages.'''
-
-    def __init__(self, log):
-        self._log = log
-
-    def write(self, message):
-        '''Write WSGI log message to main log.'''
-        self._log.info(message.rstrip())
 
 
 class Request(scalestack.Common):
     '''Request class used by the WSGI server.'''
 
-    def __init__(self, env, start, core):
+    def __init__(self, env, start, core, extra_env=None):
         super(Request, self).__init__(core)
         self._env = env
+        if extra_env is not None:
+            self._env.update(extra_env)
         self._start = start
         self._method = env['REQUEST_METHOD'].upper()
         self._parameters = None
         self._cookies = None
         self._body = None
-        self._headers = [('Server', self._get_config('server_name'))]
+        self._headers = [('Server', self._env['SERVER_SOFTWARE'])]
 
     def run(self):
         '''Run the request.'''
@@ -246,8 +251,8 @@ class MethodNotAllowed(StatusCode):
     status = _('405 Method Not Allowed')
 
 
-class SiteAlreadyExists(Exception):
-    '''Exception raised when a site already exists.'''
+class HandlerAlreadyExists(Exception):
+    '''Exception raised when a handler already exists.'''
 
     pass
 

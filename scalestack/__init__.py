@@ -21,24 +21,9 @@ __version__ = '0'
 
 
 class Option(object):
-    '''Details for config options. The schema is the valid type representation
-    used to convert and verify types. The empty string means any string, the
-    number 0 means any integer, 0.0 means any floating point number, and False
-    means any boolean value (default values for those types). Non-empty string
-    values must match exactly. For example, a dictionary that can have any key
-    name and values that are lists of any string values would be:
+    '''Details for config options.'''
 
-        {str(): [str()]}
-
-    For a dictionary that only allows host and port keys, you would use:
-
-        {'host': str(), 'port': int()}
-
-    Any python type that is safe to convert via json can be used, which means
-    dict, list, str, int, float, and bool.'''
-
-    def __init__(self, schema, default, description):
-        self.schema = schema
+    def __init__(self, default, description):
         self.default = default
         self.description = description
 
@@ -56,14 +41,15 @@ class Common(object):
         return self.core.get_config(self.__module__, option)
 
 
-DEFAULT_PATH = os.path.join(os.environ['HOME'], '.scalestack')
+DEFAULT_CONFIG_FILE = os.path.join(os.environ['HOME'], '.scalestack')
 DEFAULT_CONFIG = {'scalestack.http': {}}
 CONFIG_OPTIONS = {
-    'logging': Option(dict(), {
+    'logging': Option({
         'version': 1,
         'formatters': {
             'default': {
-                'format': '%(asctime)s %(levelname)s %(name)s %(message)s'}},
+                'format': '%(asctime)s %(levelname)s %(process)d %(name)s '
+                    '%(message)s'}},
         'handlers': {
             'console': {
                 'class': 'logging.StreamHandler',
@@ -72,44 +58,38 @@ CONFIG_OPTIONS = {
         'root': {
             'handlers': ['console']}},
         _('Logging schema to use, for details see: '
-        'http://docs.python.org/library/logging.config.html'))}
+        'http://docs.python.org/library/logging.config.html')),
+    'processes': Option(1,
+        _('Number of processes to run as one services are started.'))}
 
 
 class Core(object):
     '''Class to manage configuration, logging, services, and the event loop.'''
 
-    def __init__(self, path=None):
-        self.path = path or DEFAULT_PATH
-        if not os.path.exists(self.path):
-            os.mkdir(self.path)
-        self.config_file = self.abspath('config')
-        if os.path.exists(self.config_file):
-            self.config = json.load(open(self.config_file, 'r'))
-        else:
-            self.config = DEFAULT_CONFIG
+    def __init__(self, config_file=None):
+        self.config_file = config_file or DEFAULT_CONFIG_FILE
         self.services = {'scalestack': self}
         self.force_log_level = None
         self.running = False
         self._log = None
-
-    def abspath(self, path):
-        '''Make the given path absolute relative to the configure path.'''
-        if os.path.isabs(path):
-            return path
-        return os.path.abspath(os.path.join(self.path, path))
+        if os.path.isfile(self.config_file):
+            self.config = json.load(open(self.config_file, 'r'))
+        else:
+            self.config = DEFAULT_CONFIG
+        for service in self.config:
+            for option in self.config[service]:
+                self.verify_config(service, option)
 
     def save_config(self):
         '''Save the current configuration to the file.'''
         json.dump(self.config, open(self.config_file, 'w'), indent=4)
-        self._log.info(_('Saved config to file: %s'), self.config_file)
+        if self.running:
+            self._log.info(_('Saved config to file: %s'), self.config_file)
 
     def get_config(self, service, option):
         '''Get a config value if set or the default.'''
         self.verify_config(service, option)
         if service in self.config:
-            local_option = '_%s' % option
-            if local_option in self.config[service]:
-                return self.config[service][local_option]
             if option in self.config[service]:
                 return self.config[service][option]
         return sys.modules[service].CONFIG_OPTIONS[option].default
@@ -150,23 +130,24 @@ class Core(object):
             __import__(service)
             self.services[service] = getattr(sys.modules[service], 'Service')
         except (ImportError, ValueError, AttributeError), exception:
-            raise ImportError(_('Cannot be imported %s.Service (%s)') %
+            raise ImportError(_('Cannot import %s.Service (%s)') %
                 (service, exception))
         if self.running:
             self.start_service(service)
 
     def start_service(self, service):
         '''Start a service, loading it first if needed.'''
-        if service not in self.services:
-            self.load_service(service)
-        if service != 'scalestack':
+        self.load_service(service)
+        if service != 'scalestack' and \
+            not hasattr(self.services[service], 'core'):
             self.services[service] = self.services[service](self)
             self._log.info(_('Started service: %s'), service)
 
     def get_service(self, service):
         '''Get a service, loading it first if needed.'''
-        if service not in self.services:
-            self.load_service(service)
+        if not self.running:
+            return None
+        self.start_service(service)
         return self.services[service]
 
     def run(self):
@@ -177,6 +158,7 @@ class Core(object):
         for service in self.config:
             self.start_service(service)
         self._log.info(_('Starting event loop'))
+        self._setup_processes()
         try:
             while True:
                 time.sleep(60)
@@ -197,6 +179,13 @@ class Core(object):
             for handler in logger.handlers:
                 handler.setLevel(self.force_log_level)
 
+    def _setup_processes(self):
+        '''Start extra processes if needed.'''
+        for _process in xrange(1, self._get_config('processes')):
+            if os.fork() == 0:
+                self._log.info(_('Processes started with PID %d'), os.getpid())
+                return
+
 
 class ServiceNotLoaded(Exception):
     '''Exception raised when a service was requested but was not loaded.'''
@@ -210,34 +199,6 @@ class InvalidConfigOption(Exception):
     pass
 
 
-def data_file(filename):
-    '''Get a data file from the package data directory.'''
-    filename = os.path.join(os.path.dirname(__file__), '_data', filename)
-    return open(filename).read()
-
-
-UNIQUE_ID_EXTRA = 0
-
-
-def get_unique_id():
-    '''Make a fairly unique time-based 64bit integer (4k possible per
-    microsecond).'''
-    global UNIQUE_ID_EXTRA
-    now = time.time()
-    secs = int(now)
-    micros = int((now - secs) * 1000000)
-    unique = (secs << 32) + (micros << 12) + UNIQUE_ID_EXTRA
-    UNIQUE_ID_EXTRA += 1
-    if UNIQUE_ID_EXTRA >= 4096:
-        UNIQUE_ID_EXTRA = 0
-    return unique
-
-
-def parse_unique_id(unique_id):
-    '''Parse a unique ID into it's parts.'''
-    return (unique_id >> 32, (unique_id >> 12) & 1048575, unique_id & 4095)
-
-
 HELP_TEXT = _('''
 Service configuration may be given by using the syntax:
 
@@ -248,13 +209,6 @@ following argument:
 
     scalestack.http.port=8080
 
-Configuration given is stored in the main config hash, so it will be included
-if the configuration is saved to a file. Local only options (those not
-propagated via remote interfaces) may be given by using a '_' prefix on the
-option name. For example:
-
-    scalestack.http._port=8080
-
 Available options:
 ''')
 
@@ -263,12 +217,12 @@ def main():
     '''Setup a core object and start the core.'''
     parser = optparse.OptionParser(usage=_('Usage: scalestack [options]'),
         add_help_option=False)
+    parser.add_option('-c', '--config', default=DEFAULT_CONFIG_FILE,
+        help=_('Config file to use'))
     parser.add_option('-d', '--debug', action='store_true',
         help=_('Show debugging output'))
     parser.add_option('-h', '--help', action='store_true',
-        help='Show this help message and exit')
-    parser.add_option('-p', '--path', default=DEFAULT_PATH,
-        help=_('Location to keep all data files'))
+        help=_('Show this help message and exit'))
     parser.add_option('-v', '--verbose', action='store_true',
         help=_('Show more verbose output'))
     parser.add_option('-V', '--version', action='store_true',
@@ -277,7 +231,7 @@ def main():
     if options.version:
         print __version__
         return
-    core = Core(options.path)
+    core = Core(options.config)
     if options.debug:
         core.force_log_level = logging.DEBUG
     elif options.verbose:
@@ -285,7 +239,8 @@ def main():
     for arg in args:
         parts = arg.split('=', 1)
         if len(parts) == 1:
-            parts.append('{}')
+            # If no value is given, treat it like a flag and use True.
+            parts.append('True')
         (service, option) = parts[0].rsplit('.', 1)
         core.set_config(service, option, parse_value(parts[1]))
     if options.help:
@@ -294,14 +249,13 @@ def main():
         for service in sorted(core.services):
             for option_name in sorted(sys.modules[service].CONFIG_OPTIONS):
                 option = sys.modules[service].CONFIG_OPTIONS[option_name]
-                print _('%s.%s=%s\n\n    %s\n    (default=%s)\n') % (service,
-                    option_name, str(option.value_type)[7:-2],
-                    option.help_text, option.default)
+                print _('%s.%s - %s (default=%s)') % (service, option_name,
+                    option.description, json.dumps(option.default, indent=4))
         return
     try:
         core.run()
     except Exception, exception:  # pylint: disable=W0703
-        error = _('Uncaught exception in event loop: %s (%s)') % \
+        error = _('Uncaught exception in core: %s (%s)') % \
             (exception, ''.join(traceback.format_exc().split('\n')))
         logging.getLogger().critical(error)
         sys.stderr.write('\n%s\n' % error)
@@ -317,17 +271,6 @@ def parse_value(value):  # pylint: disable=R0911,R0912
         return value.strip("'")
     if value[0] == '"':
         return value.strip('"')
-    if value[0] == '[':
-        value_list = value.strip('[] ')
-        if value_list == '':
-            return []
-        return [parse_value(item) for item in value_list.split(',')]
-    if value[0] == '{':
-        result = {}
-        for pair in value.strip('{} ').split(','):
-            pair = pair.split('=')
-            result[pair[0]] = parse_value(pair[1])
-        return result
     if value.isdigit():
         return int(value)
     if value.lower() == 'true':
@@ -336,6 +279,8 @@ def parse_value(value):  # pylint: disable=R0911,R0912
         return False
     if value.lower() == 'none':
         return None
+    if value[0] == '[' or value[0] == '{':
+        return json.loads(value)
     if value.startswith('json:'):
         return json.loads(value[5:])
     return value

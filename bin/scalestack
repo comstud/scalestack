@@ -10,4 +10,4 @@ then
     export PYTHONPATH
 fi
 
-/usr/bin/env python -m scalestack.__init__ $*
+/usr/bin/env python -m scalestack.__init__ "$@"

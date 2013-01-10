@@ -4,4 +4,5 @@ build
 coverage.html
 dist
 scalestack.egg-info
-test.data
+test.log
+test.pid

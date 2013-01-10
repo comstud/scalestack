@@ -23,8 +23,8 @@ HTML code coverage report by running::
     rm -rf coverage.html .coverage*
     python-coverage run setup.py nosetests
     python-coverage combine
-    python-coverage html -d coverage.html --omit=/usr,test,setup
-    python-coverage report --omit=/usr,test,setup
+    python-coverage html -d coverage.html --include='scalestack/*'
+    python-coverage report --include='scalestack/*'
 
 If you have the following tools installed, you can perform sanity checks
 on the code by running::
@@ -32,3 +32,6 @@ on the code by running::
     pylint -iy --rcfile .pylintrc scalestack
     pep8 -r scalestack
     pyflakes scalestack | grep -v "undefined name '_'"
+    pylint -iy --rcfile .pylintrc test
+    pep8 -r test
+    pyflakes test | grep -v "undefined name '_'"
