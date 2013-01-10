@@ -1,5 +1,5 @@
-Scale Stack is a simple, scalable, multi-master server development
-framework written in Python. For more information, check out:
+Scale Stack is a simple, scalable, server development framework written
+in Python. For more information, check out:
 
 * http://scalestack.org/
 * https://github.com/eday/scalestack
@@ -32,6 +32,9 @@ on the code by running::
     pylint -iy --rcfile .pylintrc scalestack
     pep8 -r scalestack
     pyflakes scalestack | grep -v "undefined name '_'"
+
+And the same for tests::
+
     pylint -iy --rcfile .pylintrc test
     pep8 -r test
     pyflakes test | grep -v "undefined name '_'"

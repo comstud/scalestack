@@ -194,6 +194,17 @@ class Request(scalestack.Common):
             self._headers)
         return body or ''
 
+    def _stream(self, stream, size, profile=None):
+        '''Stream a file-like object in chunks.'''
+        while True:
+            data = stream.read(size)
+            if data == '':
+                if profile:
+                    profile.mark_time('stream')
+                    self._log.info(profile)
+                return
+            yield data
+
     def _ok(self, body=None):
         '''Start a 200 response.'''
         return self._respond(_('200 Ok'), body)

@@ -40,6 +40,10 @@ class Common(object):
         '''Get config options for this module.'''
         return self.core.get_config(self.__module__, option)
 
+    def _get_service(self):
+        '''Get service for this module.'''
+        return self.core.get_service(self.__module__)
+
 
 DEFAULT_CONFIG_FILE = os.path.join(os.environ['HOME'], '.scalestack')
 DEFAULT_CONFIG = {'scalestack.http': {}}
@@ -68,14 +72,15 @@ class Core(object):
 
     def __init__(self, config_file=None):
         self.config_file = config_file or DEFAULT_CONFIG_FILE
+        self.config = {'scalestack': {}}
         self.services = {'scalestack': self}
         self.force_log_level = None
         self.running = False
         self._log = None
         if os.path.isfile(self.config_file):
-            self.config = json.load(open(self.config_file, 'r'))
+            self.config.update(json.load(open(self.config_file, 'r')))
         else:
-            self.config = DEFAULT_CONFIG
+            self.config.update(DEFAULT_CONFIG)
         for service in self.config:
             for option in self.config[service]:
                 self.verify_config(service, option)
@@ -101,8 +106,6 @@ class Core(object):
     def set_config(self, service, option, value, overwrite=True):
         '''Set a config value.'''
         self.verify_config(service, option)
-        if service not in self.config:
-            self.config[service] = {}
         if overwrite or option not in self.config:
             self.config[service][option] = value
             if self.running:
@@ -129,6 +132,8 @@ class Core(object):
         try:
             __import__(service)
             self.services[service] = getattr(sys.modules[service], 'Service')
+            if service not in self.config:
+                self.config[service] = {}
         except (ImportError, ValueError, AttributeError), exception:
             raise ImportError(_('Cannot import %s.Service (%s)') %
                 (service, exception))
@@ -183,8 +188,8 @@ class Core(object):
         '''Start extra processes if needed.'''
         for _process in xrange(1, self._get_config('processes')):
             if os.fork() == 0:
-                self._log.info(_('Processes started with PID %d'), os.getpid())
                 return
+            self._log.info(_('Processes started with PID %d'), os.getpid())
 
 
 class ServiceNotLoaded(Exception):
@@ -239,10 +244,11 @@ def main():
     for arg in args:
         parts = arg.split('=', 1)
         if len(parts) == 1:
-            # If no value is given, treat it like a flag and use True.
-            parts.append('True')
-        (service, option) = parts[0].rsplit('.', 1)
-        core.set_config(service, option, parse_value(parts[1]))
+            # If no value is given, just load the service.
+            core.load_service(parts[0])
+        else:
+            (service, option) = parts[0].rsplit('.', 1)
+            core.set_config(service, option, parse_value(parts[1]))
     if options.help:
         parser.print_help()
         print HELP_TEXT

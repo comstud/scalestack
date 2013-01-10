@@ -15,7 +15,7 @@ setuptools.setup(
     include_package_data=True,
     scripts=['bin/scalestack'],
     test_suite='nose.collector',
-    install_requires=['eventlet'],
+    install_requires=['gevent'],
     classifiers=[
         'Development Status :: 3 - Alpha',
         'Environment :: No Input/Output (Daemon)',
